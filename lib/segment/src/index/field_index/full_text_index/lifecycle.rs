@@ -142,6 +142,11 @@ impl FullTextIndex {
             });
         }
 
+        // Only boundaries means no value held any text, so it is not a document.
+        if insert_boundaries && str_tokens.len() == values.len() - 1 {
+            str_tokens.clear();
+        }
+
         str_tokens
     }
 

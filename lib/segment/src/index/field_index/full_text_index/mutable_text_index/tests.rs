@@ -8,6 +8,7 @@ use rstest::rstest;
 use tempfile::Builder;
 
 use super::super::FullTextIndex;
+use super::super::inverted_index::InvertedIndex;
 use crate::data_types::index::{TextIndexParams, TextIndexType, TokenizerType};
 use crate::index::field_index::{PayloadFieldIndex, ValueIndexer};
 use crate::json_path::JsonPath;
@@ -459,4 +460,45 @@ fn scoring_off_records_no_lengths(#[values(false, true)] phrase_matching: bool) 
         as_scoring.is_none(),
         "records without lengths must not open under scoring",
     );
+}
+
+/// An array whose values tokenize to nothing holds no text, so it is not a
+/// document, the same as a single empty string. The sentinel between its values
+/// must not make it count towards `N` for BM25.
+#[test]
+fn empty_array_is_not_a_document() {
+    let temp_dir = Builder::new()
+        .prefix("doc_len_empty_array")
+        .tempdir()
+        .unwrap();
+    let hw_counter = HardwareCounterCell::new();
+
+    let payloads = [
+        serde_json::json!("alpha beta"),
+        serde_json::json!(["", ""]),
+        serde_json::json!(""),
+        serde_json::json!(["", "", ""]),
+    ];
+
+    let mut index = gridstore_index(
+        temp_dir.path().join("index"),
+        length_config(true),
+        true,
+        true,
+    )
+    .unwrap()
+    .unwrap();
+    for (idx, payload) in payloads.iter().enumerate() {
+        index
+            .add_point(idx as PointOffsetType, &[payload], &hw_counter)
+            .unwrap();
+    }
+
+    let FullTextIndex::Mutable(inner) = &index else {
+        panic!("expected a mutable (gridstore) index");
+    };
+    assert_eq!(inner.inner.inverted_index.points_count(), 1);
+    let (lens, total) = doc_lens(&index);
+    assert_eq!(lens, vec![2, 0, 0, 0]);
+    assert_eq!(total, 2);
 }
